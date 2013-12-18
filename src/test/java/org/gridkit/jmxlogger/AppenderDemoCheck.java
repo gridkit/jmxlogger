@@ -19,6 +19,7 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.Random;
 
+import org.apache.log4j.Logger;
 import org.junit.Test;
 
 public class AppenderDemoCheck {
@@ -46,6 +47,20 @@ public class AppenderDemoCheck {
 		}
 		
 		appender.close();		
+	}
+
+	@Test
+	public void show_logging_beans() throws InterruptedException {
+
+		Logger logger = Logger.getLogger("PERF.test");
+		
+		Random rnd = new Random();
+		for(int i = 0; i != 200000; ++i) {
+//			Thread.sleep(10);
+			for(int j = 0; j != 1; ++j) {
+				logger.info("" + rnd.nextGaussian() + "ms");
+			}
+		}
 	}
 	
 }

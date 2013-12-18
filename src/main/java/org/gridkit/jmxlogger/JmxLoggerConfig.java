@@ -17,7 +17,6 @@ package org.gridkit.jmxlogger;
 
 import java.util.ArrayList;
 import java.util.Collection;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -26,7 +25,6 @@ import javax.management.ObjectName;
 import javax.xml.bind.annotation.XmlAttribute;
 import javax.xml.bind.annotation.XmlElement;
 import javax.xml.bind.annotation.XmlRootElement;
-import javax.xml.bind.annotation.XmlTransient;
 import javax.xml.bind.annotation.XmlValue;
 
 class JmxLoggerConfig {
@@ -37,7 +35,7 @@ class JmxLoggerConfig {
 			throw new IllegalArgumentException("var is empty");
 		}
 		else {
-			if (Character.isJavaIdentifierStart(name.charAt(0))) {
+			if (!Character.isJavaIdentifierStart(name.charAt(0))) {
 				throw new IllegalArgumentException("Not a valid name '" + name + "'");
 			}
 			for(int i = 1; i != name.length(); ++i) {
@@ -88,32 +86,11 @@ class JmxLoggerConfig {
 		@XmlElement(name = "pattern")
 		public String pattern;
 
-		@XmlTransient
-		public Map<String, Variable> vars = new LinkedHashMap<String, Variable>(); 
+		@XmlElement(name = "var")
+		public List<Variable> vars = new ArrayList<Variable>(); 
 
 		@XmlElement(name = "mbean")
-		public List<MBean> beans = new ArrayList<MBean>(); 
-		
-		@XmlElement(name = "var")
-		public void setVars(List<Variable> vars) {
-			for(Variable var: vars) {
-				addVar(var);
-			}
-		}
-		
-		public void addVar(Variable var) {
-			var.name = var.name.trim();
-			validateVarName(var.name);
-			if (var.name == null) {
-				throw new IllegalArgumentException("@name is missing for <var>");
-			}
-			if (var.expr == null || var.expr.trim().length() == 0) {
-				throw new IllegalArgumentException("Content is missing for <var>");
-			}
-			if (vars.containsKey(var.name)) {
-				throw new IllegalArgumentException("Duplicate var '" + var.name + "'");
-			}
-		}		
+		public List<MBean> beans = new ArrayList<MBean>(); 		
 	}
 	
 	public static class Variable {

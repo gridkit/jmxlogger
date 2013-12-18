@@ -49,6 +49,7 @@ public class JmxLoggerConfigTest {
 		"<match>\n" + 
 		"<pattern>%{NUMBER:N}</pattern>\n" +
 		"<var name=\"NN\">N</var>\n" + 
+		"<var name=\"NN2\">N</var>\n" + 
 		"<mbean>\n" +
 		"<name>CustomBean:id=%{NN}</name>\n" + 
 		"<report>NN</report>\n" + 
@@ -63,6 +64,7 @@ public class JmxLoggerConfigTest {
 		
 		Assert.assertEquals(1, c.matchers.size());
 		Assert.assertEquals(1, c.matchers.get(0).beans.size());
+		Assert.assertEquals(2, c.matchers.get(0).vars.size());
 	}
 	
 }

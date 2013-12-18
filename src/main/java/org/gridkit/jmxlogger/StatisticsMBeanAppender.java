@@ -56,7 +56,7 @@ import org.gridkit.jorka.Jorka.Match;
  */
 public class StatisticsMBeanAppender extends AppenderSkeleton {
 
-	private static final Logger LOGGER = LogManager.getLogger(StatisticsMBeanAppender.class);
+//	private static final Logger LOGGER = LogManager.getLogger(StatisticsMBeanAppender.class);
 	
 	private static final int DEFAULT_BUCKET_LIMIT = 1000;
 	private static final int DEFAULT_BUFFER_SIZE = 512;
@@ -75,6 +75,10 @@ public class StatisticsMBeanAppender extends AppenderSkeleton {
 	private Map<String, LineMatcher> matchers = new LinkedHashMap<String, LineMatcher>();
 	
 	private MBeanPublishTask publisher;
+	
+	private Logger errorLogger;
+	
+	private boolean tryinit;
 	
 	public synchronized TimerTask publishJmx(MBeanPublisher server) {
 		if (publisher != null) {
@@ -120,7 +124,7 @@ public class StatisticsMBeanAppender extends AppenderSkeleton {
 			JAXBContext ctx = JAXBContext.newInstance(Config.class);
 			Config cfg = (Config) ctx.createUnmarshaller().unmarshal(is);
 			processConfig(cfg);
-		}
+		}		
 		catch(IOException e) {
 			throw new RuntimeException(e);
 		}
@@ -133,7 +137,18 @@ public class StatisticsMBeanAppender extends AppenderSkeleton {
 		setPatternLibrary(cfg.patterns);
 		for(Matcher matcher: cfg.matchers) {
 			Map<String, String> vars = new HashMap<String, String>();
-			for(Variable var: matcher.vars.values()) {
+			for(Variable var: matcher.vars) {
+				var.name = var.name.trim();
+				JmxLoggerConfig.validateVarName(var.name);
+				if (var.name == null) {
+					throw new IllegalArgumentException("@name is missing for <var>");
+				}
+				if (var.expr == null || var.expr.trim().length() == 0) {
+					throw new IllegalArgumentException("Content is missing for <var>");
+				}
+				if (vars.containsKey(var.name)) {
+					throw new IllegalArgumentException("Duplicate var '" + var.name + "'");
+				}
 				vars.put(var.name, var.expr);
 			}
 			
@@ -142,10 +157,24 @@ public class StatisticsMBeanAppender extends AppenderSkeleton {
 					long td = reporter.timeDepth == null ? -1 : TimeIntervalParser.toMillis(reporter.timeDepth);
 					addSimpleReporter(matcher.pattern, vars, reporter.mbean, reporter.valueRef, reporter.description, reporter.bufferSize, td);
 				} catch (Exception e) {
-					LOGGER.error("Configuration error", e);
+					tryInitLogger();
+					if (errorLogger != null) {
+						errorLogger.error("Configuration error", e);
+					}
+					else {
+						System.err.println("jmxlogger:ERROR Configuration error");
+						e.printStackTrace();
+					}
 				}
 			}
 		}		
+	}
+
+	private void tryInitLogger() {
+		Logger logger = LogManager.getLogger(getClass());
+		if (logger.getAllAppenders().hasMoreElements()) {
+			errorLogger = logger;
+		}
 	}
 
 	public void setPatternLibrary(String patterns) {
@@ -214,7 +243,11 @@ public class StatisticsMBeanAppender extends AppenderSkeleton {
 	
 	@Override
 	protected void append(LoggingEvent event) {
-		String text = event.getRenderedMessage();
+		if (tryinit) {
+			tryinit = false;
+			tryInitLogger();
+		}
+		String text = getLayout().format(event);
 		processLogLine(event.getTimeStamp(), text);
 	}
 	
@@ -232,8 +265,8 @@ public class StatisticsMBeanAppender extends AppenderSkeleton {
 						reportTree(timestamp, rep, tree);
 					}
 					catch(Exception e) {
-						if (LOGGER.isDebugEnabled()) {
-							LOGGER.debug("Reporing error for line: " + line, e);
+						if (isErrorLogEnabled()) {
+							logError("Reporing error for line: " + line, e);
 						}
 					}
 				}
@@ -249,8 +282,8 @@ public class StatisticsMBeanAppender extends AppenderSkeleton {
 		}		
 		ObjectName name = JmxLoggerConfig.instantiateMBeanName(rep.mbean, state);
 		if (name == null) {
-			if (LOGGER.isDebugEnabled()) {
-				LOGGER.debug("Failed instantiate MBane name. [" + rep.mbean + "] " + state);
+			if (isErrorLogEnabled()) {
+				logError("Failed instantiate MBane name. [" + rep.mbean + "] " + state);
 			};
 		}
 		else {
@@ -289,6 +322,22 @@ public class StatisticsMBeanAppender extends AppenderSkeleton {
 		buckets.put(b.bucketName, b);
 		
 		return b;		
+	}
+	
+	private boolean isErrorLogEnabled() {
+		return errorLogger != null && errorLogger.isDebugEnabled();
+	}
+
+	private void logError(String msg) {
+		if (errorLogger != null) {
+			errorLogger.debug(msg);
+		}		
+	}
+
+	private void logError(String msg, Exception e) {
+		if (errorLogger != null) {
+			errorLogger.debug(msg, e);
+		}		
 	}
 	
 	class MBeanPublishTask extends TimerTask implements Runnable {
@@ -346,8 +395,8 @@ public class StatisticsMBeanAppender extends AppenderSkeleton {
 				publisher.registerMBean(name, statProxy);
 			}
 			catch(Exception e) {
-				if (LOGGER.isDebugEnabled()) {
-					LOGGER.debug("Failed to register: " + name, e);
+				if (isErrorLogEnabled()) {
+					logError("Failed to register: " + name, e);
 				}
 			}
 		}
@@ -357,8 +406,8 @@ public class StatisticsMBeanAppender extends AppenderSkeleton {
 				publisher.unregisterMBean(name);
 			}
 			catch(Exception e) {
-				if (LOGGER.isDebugEnabled()) {
-					LOGGER.debug("Failed to unregister: " + name, e);
+				if (isErrorLogEnabled()) {
+					logError("Failed to unregister: " + name, e);
 				}
 			}
 		}

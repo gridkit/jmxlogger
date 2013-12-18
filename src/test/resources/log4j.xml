@@ -5,10 +5,24 @@
     
     <appender name="stdout" class="org.apache.log4j.ConsoleAppender">
         <layout class="org.apache.log4j.PatternLayout">
-            <param name="ConversionPattern" value="%-5p %d -> %x %m%n" />
+            <param name="ConversionPattern" value="%d{yyyy/MM/dd HH:mm:ss,SSS} - [%t] - %p - %c - %m%n" />
         </layout>
     </appender>
 
+    <appender name="jmx-stats" class="org.gridkit.jmxlogger.StatisticsMBeanAppender">
+        <param name="AutoRegister" value="true" />
+        <param name="Config" value="jmxlogger.xml" />
+        <param name="DefaultTimeDepth" value="30s" />
+        <layout class="org.apache.log4j.PatternLayout">
+            <param name="ConversionPattern" value="%c - %m%n" />
+        </layout>        
+    </appender>
+
+    <logger name="PERF">
+        <level value="INFO"/>
+        <appender-ref ref="jmx-stats"/>
+    </logger>
+    
     <root>
         <priority value="DEBUG" />
         <appender-ref ref="stdout" />
