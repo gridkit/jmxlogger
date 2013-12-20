@@ -74,7 +74,10 @@ class JmxLoggerConfig {
 	public static class Config {
 
 		@XmlElement(name = "patterns")
-		public String patterns;
+		public List<String> patterns = new ArrayList<String>();
+		
+		@XmlElement(name = "include-patterns")
+		public List<String> includes = new ArrayList<String>();
 		
 		@XmlElement(name = "match")
 		public List<Matcher> matchers = new ArrayList<Matcher>(); 
@@ -84,13 +87,22 @@ class JmxLoggerConfig {
 	public static class Matcher {
 		
 		@XmlElement(name = "pattern")
-		public String pattern;
+		public Pattern pattern;
 
 		@XmlElement(name = "var")
 		public List<Variable> vars = new ArrayList<Variable>(); 
 
 		@XmlElement(name = "mbean")
 		public List<MBean> beans = new ArrayList<MBean>(); 		
+	}
+	
+	public static class Pattern {
+	    
+	    @XmlAttribute(name = "dialect", required = false)
+	    public String type;
+
+	    @XmlValue
+	    public String pattern;
 	}
 	
 	public static class Variable {

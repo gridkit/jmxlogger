@@ -19,6 +19,7 @@ import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.InputStreamReader;
 import java.io.StringReader;
 import java.math.BigDecimal;
 import java.util.ArrayList;
@@ -49,37 +50,38 @@ import org.gridkit.jorka.Jorka;
 import org.gridkit.jorka.Jorka.Match;
 
 /**
- * This log appender parses structural data from log messages, 
- * calculates basic statistical aggregates and exposes it as MBeans.
+ * This log appender parses structural data from log messages, calculates basic
+ * statistical aggregates and exposes it as MBeans.
  * 
  * @author Alexey Ragozin (alexey.ragozin@gmail.com)
  */
 public class StatisticsMBeanAppender extends AppenderSkeleton {
 
-//	private static final Logger LOGGER = LogManager.getLogger(StatisticsMBeanAppender.class);
-	
-	private static final int DEFAULT_BUCKET_LIMIT = 1000;
-	private static final int DEFAULT_BUFFER_SIZE = 512;
-	private static final long DEFAULT_TIME_DEPTH = TimeUnit.SECONDS.toMillis(30);
+    // private static final Logger LOGGER =
+  	// LogManager.getLogger(StatisticsMBeanAppender.class);
+  
+  	private static final int DEFAULT_BUCKET_LIMIT = 1000;
+  	private static final int DEFAULT_BUFFER_SIZE = 512;
+  	private static final long DEFAULT_TIME_DEPTH = TimeUnit.SECONDS.toMillis(30);
 
 	private static final double S2M = TimeUnit.SECONDS.toMillis(1);
-	
+
 	private int defaultBufferSize = DEFAULT_BUFFER_SIZE;
 	private long defaultTimeDepth = DEFAULT_TIME_DEPTH;
 	private int bucketLimit = DEFAULT_BUCKET_LIMIT;
-	
+
 	private Map<ObjectName, StatsBucket> buckets = new LinkedHashMap<ObjectName, StatsBucket>();
 	private AtomicLong bucketModCount = new AtomicLong();
-	
-	private String patternLibrary;
+
+	private Jorka patternLibrary = new Jorka();
 	private Map<String, LineMatcher> matchers = new LinkedHashMap<String, LineMatcher>();
-	
+
 	private MBeanPublishTask publisher;
-	
+
 	private Logger errorLogger;
-	
+
 	private boolean tryinit;
-	
+
 	public synchronized TimerTask publishJmx(MBeanPublisher server) {
 		if (publisher != null) {
 			throw new IllegalStateException("MBeanServer is already connected");
@@ -89,7 +91,7 @@ public class StatisticsMBeanAppender extends AppenderSkeleton {
 		timer.schedule(publisher, 5000, 5000);
 		return publisher;
 	}
-	
+
 	@Override
 	public synchronized void close() {
 		publisher.cancel();
@@ -109,10 +111,11 @@ public class StatisticsMBeanAppender extends AppenderSkeleton {
 	public void setBucketLimit(int bucketLimit) {
 		this.bucketLimit = bucketLimit;
 	}
-	
+
 	public void setConfig(String config) {
 		try {
-			InputStream is = getClass().getClassLoader().getResourceAsStream(config);
+			InputStream is = getClass().getClassLoader().getResourceAsStream(
+					config);
 			if (is == null) {
 				if (new File(config).isFile()) {
 					is = new FileInputStream(config);
@@ -124,18 +127,25 @@ public class StatisticsMBeanAppender extends AppenderSkeleton {
 			JAXBContext ctx = JAXBContext.newInstance(Config.class);
 			Config cfg = (Config) ctx.createUnmarshaller().unmarshal(is);
 			processConfig(cfg);
-		}		
-		catch(IOException e) {
+		} catch (IOException e) {
 			throw new RuntimeException(e);
-		}
-		catch(JAXBException e) {
+		} catch (JAXBException e) {
 			throw new RuntimeException(e);
 		}
 	}
 
 	public void processConfig(Config cfg) {
-		setPatternLibrary(cfg.patterns);
+	    for(String include : cfg.includes) {
+	        addPatternsFromFile(include);
+	    }
+		for(String patterns : cfg.patterns) {
+		    addPatterns(patterns);
+		}
 		for(Matcher matcher: cfg.matchers) {
+		    String pattern = matcher.pattern.pattern;
+		    if (matcher.pattern.type == null) {
+		        pattern = Jorka.simpleTemplateToRegEx(pattern);
+		    }
 			Map<String, String> vars = new HashMap<String, String>();
 			for(Variable var: matcher.vars) {
 				var.name = var.name.trim();
@@ -155,7 +165,7 @@ public class StatisticsMBeanAppender extends AppenderSkeleton {
 			for(MBean reporter: matcher.beans) {
 				try {
 					long td = reporter.timeDepth == null ? -1 : TimeIntervalParser.toMillis(reporter.timeDepth);
-					addSimpleReporter(matcher.pattern, vars, reporter.mbean, reporter.valueRef, reporter.description, reporter.bufferSize, td);
+					addSimpleReporter(pattern, vars, reporter.mbean, reporter.valueRef, reporter.description, reporter.bufferSize, td);
 				} catch (Exception e) {
 					tryInitLogger();
 					if (errorLogger != null) {
@@ -177,39 +187,57 @@ public class StatisticsMBeanAppender extends AppenderSkeleton {
 		}
 	}
 
-	public void setPatternLibrary(String patterns) {
-		this.patternLibrary = patterns;
+	public void addPatterns(String patterns) {
+		try {
+            this.patternLibrary.addPatternFromReader(new StringReader(patterns));
+        } catch (IOException e) {
+            throw new RuntimeException(e);
+        }
 	}
-	
+
+	public void addPatternsFromFile(String path) {
+	    try {
+	        InputStream is = Thread.currentThread().getContextClassLoader().getResourceAsStream(path);
+	        if (is == null) {
+	            is = getClass().getClassLoader().getResourceAsStream(path);
+	        }
+	        if (is == null) {
+	            File f = new File(path);
+	            if (f.isFile()) {
+	                is = new FileInputStream(f);
+	            }
+	        }
+	        if (is == null) {
+	            throw new RuntimeException("Unable to find in resources or file system: " + path);
+	        }
+	        patternLibrary.addPatternFromReader(new InputStreamReader(is));
+	    } catch (IOException e) {
+	        throw new RuntimeException(e);
+	    }
+	}
+
 	/**
 	 * Exposed mostly for testing reasons
 	 */
 	public void addSimpleReporter(String pattern, Map<String, String> variables, String beanName, String expression, String description, int bufferSize, long timeDepth) {
-		LineMatcher m;
+	    LineMatcher m;
 		if (matchers.containsKey(pattern)) {
 			m = matchers.get(pattern);
-		}
-		else {
+		} else {
 			LineMatcher mm = new LineMatcher();
-			Jorka j = new Jorka();
-			if (patternLibrary != null) {
-				try {
-					j.addPatternFromReader(new StringReader(patternLibrary));
-				} catch (IOException e) {
-					throw new RuntimeException(e);
-				}
-			}
-			j.compile(pattern);			
+			Jorka j = patternLibrary.copyPatterns();
+			j.compile(pattern);
 			mm.rootPattern = pattern;
 			mm.jorka = j;
 			matchers.put(pattern, mm);
 			m = mm;
 		}
-		
+
 		Reporter rep = new Reporter();
 		JmxLoggerConfig.validateMBeanName(beanName, variables.keySet());
 		if (!variables.containsKey(expression)) {
-			throw new IllegalArgumentException("Bad repport expression: " + expression);
+			throw new IllegalArgumentException("Bad repport expression: "
+					+ expression);
 		}
 		initVars(rep, variables);
 		rep.expression = expression;
@@ -217,30 +245,30 @@ public class StatisticsMBeanAppender extends AppenderSkeleton {
 		rep.mbean = beanName;
 		rep.bufferSize = bufferSize < 0 ? defaultBufferSize : bufferSize;
 		rep.timeDepth = timeDepth < 0 ? defaultTimeDepth : timeDepth;
-		
-		m.repoters.add(rep);		
+
+		m.repoters.add(rep);
 	}
-	
+
 	private void initVars(Reporter rep, Map<String, String> variables) {
-		for(String key: variables.keySet()) {
+		for (String key : variables.keySet()) {
 			String value = variables.get(key).trim();
 			if (value.length() > 0 && Character.isJavaIdentifierStart(value.charAt(0))) {
 				rep.fields.put(key, value.split("[.]"));
-			}
-			else {
+			} else {
 				rep.consts.put(key, value);
 			}
-		}		
+		}
 	}
 
 	public void setDefaultBufferSize(int bufferSize) {
 		this.defaultBufferSize = bufferSize;
 	}
-	
+
 	public void setDefaultTimeDepth(String depth) {
-		this.defaultTimeDepth = TimeUnit.MILLISECONDS.toNanos(TimeIntervalParser.toMillis(depth));
+		this.defaultTimeDepth = TimeUnit.MILLISECONDS
+				.toNanos(TimeIntervalParser.toMillis(depth));
 	}
-	
+
 	@Override
 	protected void append(LoggingEvent event) {
 		if (tryinit) {
@@ -250,9 +278,9 @@ public class StatisticsMBeanAppender extends AppenderSkeleton {
 		String text = getLayout().format(event);
 		processLogLine(event.getTimeStamp(), text);
 	}
-	
+
 	public void processLogLine(long timestamp, String line) {
-		for(LineMatcher matcher: matchers.values()) {
+		for (LineMatcher matcher : matchers.values()) {
 			if (matcher.repoters.isEmpty()) {
 				continue;
 			}
@@ -260,11 +288,10 @@ public class StatisticsMBeanAppender extends AppenderSkeleton {
 			if (m != null) {
 				m.parse();
 				Map<String, Object> tree = m.toMap();
-				for(Reporter rep: matcher.repoters) {
+				for (Reporter rep : matcher.repoters) {
 					try {
 						reportTree(timestamp, rep, tree);
-					}
-					catch(Exception e) {
+					} catch (Exception e) {
 						if (isErrorLogEnabled()) {
 							logError("Reporing error for line: " + line, e);
 						}
@@ -273,57 +300,63 @@ public class StatisticsMBeanAppender extends AppenderSkeleton {
 			}
 		}
 	}
-	
-	private void reportTree(long timestamp, Reporter rep,	Map<String, Object> tree) {
+
+	private void reportTree(long timestamp, Reporter rep,
+			Map<String, Object> tree) {
 		Map<String, String> state = new HashMap<String, String>();
 		state.putAll(rep.consts);
-		for(String key: rep.fields.keySet()) {
+		for (String key : rep.fields.keySet()) {
 			state.put(key, resolve(tree, rep.fields.get(key)));
-		}		
-		ObjectName name = JmxLoggerConfig.instantiateMBeanName(rep.mbean, state);
+		}
+		ObjectName name = JmxLoggerConfig
+				.instantiateMBeanName(rep.mbean, state);
 		if (name == null) {
 			if (isErrorLogEnabled()) {
-				logError("Failed instantiate MBane name. [" + rep.mbean + "] " + state);
-			};
-		}
-		else {
+				logError("Failed instantiate MBane name. [" + rep.mbean + "] "
+						+ state);
+			}
+			;
+		} else {
 			String val = state.get(rep.expression);
 			double v = Double.parseDouble(val);
-			StatsBucket bucket = ensureBucket(name, rep.description, rep.bufferSize, rep.timeDepth);
+			StatsBucket bucket = ensureBucket(name, rep.description,
+					rep.bufferSize, rep.timeDepth);
 			bucket.append(timestamp, v);
 		}
 	}
 
 	private String resolve(Map<String, Object> tree, String[] path) {
 		Object c = tree;
-		for(String f: path) {
-			c = ((Map<?, ?>)c).get(f);
+		for (String f : path) {
+			c = ((Map<?, ?>) c).get(f);
 			if (c == null) {
 				return "";
 			}
 		}
-		
-		return (String)c;
+
+		return (String) c;
 	}
 
-	private synchronized StatsBucket ensureBucket(ObjectName on, String description, int bufferSize, long timeDepth) {
-		
+	private synchronized StatsBucket ensureBucket(ObjectName on,
+			String description, int bufferSize, long timeDepth) {
+
 		StatsBucket b = buckets.remove(on);
 		if (b == null) {
 			if (buckets.size() >= bucketLimit) {
-				Iterator<Entry<ObjectName, StatsBucket>> it = buckets.entrySet().iterator();
+				Iterator<Entry<ObjectName, StatsBucket>> it = buckets
+						.entrySet().iterator();
 				it.next();
 				it.remove();
 			}
 
 			b = new StatsBucket(on, description, bufferSize, timeDepth);
-			bucketModCount.incrementAndGet();			
+			bucketModCount.incrementAndGet();
 		}
 		buckets.put(b.bucketName, b);
-		
-		return b;		
+
+		return b;
 	}
-	
+
 	private boolean isErrorLogEnabled() {
 		return errorLogger != null && errorLogger.isDebugEnabled();
 	}
@@ -331,15 +364,15 @@ public class StatisticsMBeanAppender extends AppenderSkeleton {
 	private void logError(String msg) {
 		if (errorLogger != null) {
 			errorLogger.debug(msg);
-		}		
+		}
 	}
 
 	private void logError(String msg, Exception e) {
 		if (errorLogger != null) {
 			errorLogger.debug(msg, e);
-		}		
+		}
 	}
-	
+
 	class MBeanPublishTask extends TimerTask implements Runnable {
 
 		private Map<ObjectName, StatsBucket> registered = new HashMap<ObjectName, StatsBucket>();
@@ -355,8 +388,9 @@ public class StatisticsMBeanAppender extends AppenderSkeleton {
 			if (bucketModCount.get() != lastModCount) {
 				synchronized (StatisticsMBeanAppender.this) {
 					lastModCount = bucketModCount.get();
-					for(ObjectName name: buckets.keySet()) {
-						if ((!registered.containsKey(name)) || (registered.get(name) != buckets.get(name))) {
+					for (ObjectName name : buckets.keySet()) {
+						if ((!registered.containsKey(name))
+								|| (registered.get(name) != buckets.get(name))) {
 							if (registered.remove(name) != null) {
 								unregisterMBean(name);
 							}
@@ -367,12 +401,12 @@ public class StatisticsMBeanAppender extends AppenderSkeleton {
 					}
 					if (registered.size() > bucketLimit) {
 						List<ObjectName> deadBeans = new ArrayList<ObjectName>();
-						for(ObjectName name: registered.keySet()) {
+						for (ObjectName name : registered.keySet()) {
 							if (!buckets.containsKey(name)) {
 								deadBeans.add(name);
 							}
 						}
-						for(ObjectName name: deadBeans) {
+						for (ObjectName name : deadBeans) {
 							unregisterMBean(name);
 							registered.remove(name);
 						}
@@ -380,21 +414,20 @@ public class StatisticsMBeanAppender extends AppenderSkeleton {
 				}
 			}
 		}
-		
+
 		@Override
 		public synchronized boolean cancel() {
-			for(ObjectName name: registered.keySet()) {
+			for (ObjectName name : registered.keySet()) {
 				unregisterMBean(name);
 			}
-			registered.clear();			
+			registered.clear();
 			return super.cancel();
 		}
 
 		private void registerMBean(ObjectName name, Stats statProxy) {
 			try {
 				publisher.registerMBean(name, statProxy);
-			}
-			catch(Exception e) {
+			} catch (Exception e) {
 				if (isErrorLogEnabled()) {
 					logError("Failed to register: " + name, e);
 				}
@@ -404,24 +437,23 @@ public class StatisticsMBeanAppender extends AppenderSkeleton {
 		private void unregisterMBean(ObjectName name) {
 			try {
 				publisher.unregisterMBean(name);
-			}
-			catch(Exception e) {
+			} catch (Exception e) {
 				if (isErrorLogEnabled()) {
 					logError("Failed to unregister: " + name, e);
 				}
 			}
 		}
 	}
-	
+
 	static class LineMatcher {
 
 		Jorka jorka;
-		String rootPattern; 
-		
+		String rootPattern;
+
 		List<Reporter> repoters = new ArrayList<Reporter>();
-		
+
 	}
-	
+
 	static class Reporter {
 
 		String mbean;
@@ -429,21 +461,21 @@ public class StatisticsMBeanAppender extends AppenderSkeleton {
 		Map<String, String> consts = new HashMap<String, String>();
 		String expression;
 		String description;
-		
+
 		int bufferSize = -1;
 		long timeDepth = -1;
-				
+
 	}
-	
+
 	static class StatsBucket {
-		
+
 		private ObjectName bucketName;
 		private String description;
-		
+
 		private long[] timestamps;
 		private double[] samples;
 		private long timeDepth;
-		
+
 		private long anchorTimestamp;
 		private long totalCount;
 		private double runningSum;
@@ -454,12 +486,13 @@ public class StatisticsMBeanAppender extends AppenderSkeleton {
 		private BigDecimal totalCubeSum = BigDecimal.valueOf(0);
 		private double totalMin = Double.NaN;
 		private double totalMax = Double.NaN;
-		
+
 		private int head = 0;
 		private int tail = 0;
 		private long lastTimestamp;
-		
-		public StatsBucket(ObjectName name, String description, int bufSize, long timeDepth) {
+
+		public StatsBucket(ObjectName name, String description, int bufSize,
+				long timeDepth) {
 			bucketName = name;
 			this.description = description;
 			timestamps = new long[bufSize];
@@ -467,28 +500,32 @@ public class StatisticsMBeanAppender extends AppenderSkeleton {
 			lastTimestamp = anchorTimestamp = System.currentTimeMillis();
 			this.timeDepth = timeDepth;
 		}
-		
+
 		public synchronized void append(long timestamp, double sample) {
 			++totalCount;
 			runningSum += sample;
-			runningSquareSum += sample * sample; 
+			runningSquareSum += sample * sample;
 			runningCubeSum += sample * sample * sample;
 			if (totalCount % 1000 == 0) {
 				flushRunning();
-			}			
-			totalMax = Double.isNaN(totalMax) ? sample : Math.max(totalMax, sample);
-			totalMin = Double.isNaN(totalMin) ? sample : Math.min(totalMin, sample);
-			lastTimestamp = timestamps[tail] = Math.max(lastTimestamp, timestamp);			
+			}
+			totalMax = Double.isNaN(totalMax) ? sample : Math.max(totalMax,
+					sample);
+			totalMin = Double.isNaN(totalMin) ? sample : Math.min(totalMin,
+					sample);
+			lastTimestamp = timestamps[tail] = Math.max(lastTimestamp,
+					timestamp);
 			samples[tail] = sample;
-			tail = inc(tail);			
+			tail = inc(tail);
 			if (tail == head) {
 				head = inc(head);
 			}
 		}
-		
+
 		private void flushRunning() {
 			totalSum = totalSum.add(BigDecimal.valueOf(runningSum));
-			totalSquareSum = totalSquareSum.add(BigDecimal.valueOf(runningSquareSum));
+			totalSquareSum = totalSquareSum.add(BigDecimal
+					.valueOf(runningSquareSum));
 			totalCubeSum = totalCubeSum.add(BigDecimal.valueOf(runningCubeSum));
 			runningSum = 0;
 			runningSquareSum = 0;
@@ -496,11 +533,11 @@ public class StatisticsMBeanAppender extends AppenderSkeleton {
 		}
 
 		public synchronized InstantStats analyze() {
-			
+
 			flushRunning();
-			
+
 			InstantStats stats = new InstantStats();
-			
+
 			long startTime = Long.MIN_VALUE;
 			long nowTime = System.currentTimeMillis();
 			long cutTime = nowTime - timeDepth;
@@ -508,9 +545,9 @@ public class StatisticsMBeanAppender extends AppenderSkeleton {
 			double total = 0;
 			double min = Double.NaN;
 			double max = Double.NaN;
-			
+
 			int n = head;
-			while(n != tail) {
+			while (n != tail) {
 				if (timestamps[n] > cutTime) {
 					if (startTime == Long.MIN_VALUE) {
 						startTime = timestamps[n];
@@ -523,13 +560,12 @@ public class StatisticsMBeanAppender extends AppenderSkeleton {
 					if (Double.isNaN(min) || min > samples[n]) {
 						min = samples[n];
 					}
-				}
-				else {
+				} else {
 					head = inc(head);
 				}
 				n = inc(n);
 			}
-			
+
 			if (count > 0) {
 				stats.count = count;
 				stats.min = min;
@@ -537,12 +573,12 @@ public class StatisticsMBeanAppender extends AppenderSkeleton {
 				stats.avg = total / count;
 				stats.window = (nowTime - startTime) / S2M;
 			}
-			
+
 			if (count > 2) {
 				stats.rate = S2M * count / (nowTime - startTime);
 				double sqTotal = 0;
 				n = head;
-				while(n != tail) {
+				while (n != tail) {
 					if (timestamps[n] > cutTime) {
 						double dv = stats.avg - samples[n];
 						sqTotal += dv * dv;
@@ -551,7 +587,7 @@ public class StatisticsMBeanAppender extends AppenderSkeleton {
 				}
 				stats.stdDev = Math.sqrt(sqTotal / count);
 			}
-			
+
 			stats.tsAnchor = anchorTimestamp;
 			stats.totalCount = totalCount;
 			stats.totalMin = totalMin;
@@ -559,22 +595,22 @@ public class StatisticsMBeanAppender extends AppenderSkeleton {
 			stats.totalSum = totalSum;
 			stats.totalSquareSum = totalSquareSum;
 			stats.totalCubeSum = totalCubeSum;
-			
+
 			stats.description = description;
 			stats.timestamp = System.currentTimeMillis();
-			
+
 			return stats;
 		}
-		
+
 		private int inc(int idx) {
 			return (idx + 1) % timestamps.length;
 		}
 	}
-	
+
 	public static class InstantStats {
-		
+
 		public String description;
-		
+
 		public double count = 0;
 		public double avg = Double.NaN;
 		public double stdDev = Double.NaN;
@@ -582,7 +618,7 @@ public class StatisticsMBeanAppender extends AppenderSkeleton {
 		public double max = Double.NaN;
 		public double rate = Double.NaN;
 		public double window = Double.NaN;
-		
+
 		public long tsAnchor;
 		public long timestamp;
 		public long totalCount;

@@ -1,6 +1,7 @@
 <mbean-appender>
     <patterns>
     <![CDATA[
+ANY .*
 USERNAME [a-zA-Z0-9_-]+ 
 USER %{USERNAME}
 INT (?:[+-]?(?:[0-9]+))
@@ -14,7 +15,7 @@ WORD (\w+)
     ]]> 
     </patterns>
     <match> 
-        <pattern>.*[.]%{WORD:name} - %{NUMBER:time}ms</pattern>
+        <pattern>%{ANY}.%{WORD:name} - %{NUMBER:time}ms</pattern>
         <var name="NAME">name</var>
         <var name="TIME">time</var> 
         <mbean>

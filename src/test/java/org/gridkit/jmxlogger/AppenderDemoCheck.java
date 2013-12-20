@@ -28,7 +28,7 @@ public class AppenderDemoCheck {
 	public void show_beans() throws InterruptedException {
 		
 		StatisticsMBeanAppender appender = new StatisticsMBeanAppender();
-		appender.setPatternLibrary(JmxLoggerConfigTest.PATTERNS);
+		appender.addPatterns(JmxLoggerConfigTest.PATTERNS);
 		
 		Map<String, String> vars = new HashMap<String, String>();
 		vars.put("NAME", "NAME");
@@ -56,7 +56,7 @@ public class AppenderDemoCheck {
 		
 		Random rnd = new Random();
 		for(int i = 0; i != 200000; ++i) {
-//			Thread.sleep(10);
+			Thread.sleep(10);
 			for(int j = 0; j != 1; ++j) {
 				logger.info("" + rnd.nextGaussian() + "ms");
 			}
