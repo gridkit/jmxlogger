@@ -20,8 +20,8 @@ public class SimpleTemplateTest {
 	public static Collection<Object[]> getCases() {
 		List<Object[]> cases = new ArrayList<Object[]>();
 		cases.add(new Object[]{"Match this", "Match\\s+this"});
-		cases.add(new Object[]{"Match this. Match that!", "Match\\s+this\\.\\s+Match\\s+that!"});
-		cases.add(new Object[]{"Match %{THIS}. Match that!", "Match\\s+%{THIS}\\.\\s+Match\\s+that!"});
+		cases.add(new Object[]{"Match this. Match that!", "Match\\s+this\\.\\s+Match\\s+that\\!"});
+		cases.add(new Object[]{"Match %{THIS}. Match that!", "Match\\s+%{THIS}\\.\\s+Match\\s+that\\!"});
 		cases.add(new Object[]{"Match (me) too.", "Match\\s+\\(me\\)\\s+too\\."});
 		return cases;
 	}

@@ -33,7 +33,8 @@ import com.google.code.regexp.Pattern;
 
 public class Jorka extends Object {
 
-	private static Pattern TEMPLATE_PATTERN = Pattern.compile("(\\%[{][^}]*[}])|(\\s+)|([.$%+*?({})\\\\\\^])|([^\\s.$%+{}*?()\\\\\\^]+)");
+    private static Pattern META_CHARACTERS = Pattern.compile("\\<\\(\\[\\{\\\\\\^\\-\\=\\$\\!\\|\\]\\}\\)\\?\\*\\+\\.\\>\\s");
+	private static Pattern TEMPLATE_PATTERN = Pattern.compile("(\\%[{][^}]*[}])|(\\s+)|([" + META_CHARACTERS + "])|([^" + META_CHARACTERS + "]+)");
 	
 	/**
 	 * <p>
